@@ -57,6 +57,7 @@ class RelationshipLink(SQLModel, table=True):
     related_person_id: int = Field(foreign_key="person.id", ondelete="CASCADE", index=True)  # Target (Child or Spouse B)
     relation_type: str   # "spouse" | "parent"
     relation_subtype: Optional[str] = None  # parent: biological/adopted/step, spouse: married/partner/divorced
+    sort_order: Optional[int] = Field(default=1, nullable=True)
 
     # Relationship back references
     tree: Tree = Relationship(back_populates="relationships")

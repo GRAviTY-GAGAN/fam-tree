@@ -27,6 +27,7 @@ class RelationshipResponse(BaseModel):
     related_person_id: str
     relation_type: str
     relation_subtype: Optional[str] = None
+    sort_order: Optional[int] = 1
 
 class TreeDataResponse(BaseModel):
     tree: TreeResponse
@@ -94,7 +95,8 @@ def get_tree_canvas_data(
             "person_id": person_uuid_map.get(rel.person_id, ""),
             "related_person_id": person_uuid_map.get(rel.related_person_id, ""),
             "relation_type": rel.relation_type,
-            "relation_subtype": rel.relation_subtype
+            "relation_subtype": rel.relation_subtype,
+            "sort_order": rel.sort_order
         })
     
     return {

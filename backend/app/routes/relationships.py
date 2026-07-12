@@ -14,6 +14,14 @@ class RelationshipCreateRequest(BaseModel):
     related_person_id: str  # Target Person UUID
     relation_type: str      # "spouse" | "parent"
     relation_subtype: Optional[str] = None  # parent: biological/adopted/step, spouse: married/partner/divorced
+    sort_order: Optional[int] = 1
+
+class RelationshipSortUpdate(BaseModel):
+    relationship_id: str
+    sort_order: int
+
+class RelationshipBatchUpdateRequest(BaseModel):
+    updates: list[RelationshipSortUpdate]
 
 @router.post("", response_model=RelationshipLink, status_code=status.HTTP_201_CREATED)
 def create_relationship(
@@ -71,6 +79,12 @@ def create_relationship(
     ).first()
     
     if existing_rel:
+        # Update sort_order if provided
+        if request.sort_order is not None:
+            existing_rel.sort_order = request.sort_order
+            session.add(existing_rel)
+            session.commit()
+            session.refresh(existing_rel)
         return existing_rel
 
     # For spouse connections, check the inverse (B -> A) to prevent duplicates as well
@@ -86,6 +100,12 @@ def create_relationship(
             )
         ).first()
         if inverse_rel:
+            # Update sort_order on the inverse if provided
+            if request.sort_order is not None:
+                inverse_rel.sort_order = request.sort_order
+                session.add(inverse_rel)
+                session.commit()
+                session.refresh(inverse_rel)
             return inverse_rel
 
     new_rel = RelationshipLink(
@@ -93,12 +113,44 @@ def create_relationship(
         person_id=person.id,
         related_person_id=related_person.id,
         relation_type=request.relation_type,
-        relation_subtype=request.relation_subtype
+        relation_subtype=request.relation_subtype,
+        sort_order=request.sort_order
     )
     session.add(new_rel)
     session.commit()
     session.refresh(new_rel)
     return new_rel
+
+@router.put("/batch", response_model=list[RelationshipLink])
+def batch_update_relationships(
+    request: RelationshipBatchUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    updated_rels = []
+    for update in request.updates:
+        rel = session.exec(select(RelationshipLink).where(RelationshipLink.relationship_id == update.relationship_id)).first()
+        if not rel:
+            continue
+            
+        tree = session.get(Tree, rel.tree_id)
+        if not tree:
+            continue
+            
+        if tree.owner_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to modify relationships in this tree"
+            )
+            
+        rel.sort_order = update.sort_order
+        session.add(rel)
+        updated_rels.append(rel)
+        
+    session.commit()
+    for rel in updated_rels:
+        session.refresh(rel)
+    return updated_rels
 
 @router.delete("/{relationship_id}", status_code=status.HTTP_200_OK)
 def delete_relationship(

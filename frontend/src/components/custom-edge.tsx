@@ -27,7 +27,8 @@ export function CustomEdge({
   targetPosition,
   style = {},
   markerEnd,
-  data
+  data,
+  selected
 }: EdgeProps) {
   const { setEdges } = useReactFlow();
   const edgeData = data as unknown as CustomEdgeData | undefined;
@@ -46,7 +47,11 @@ export function CustomEdge({
   // Calculate design style based on relation type/subtype
   let edgeStyle: React.CSSProperties = { ...style };
   
-  if (edgeData) {
+  if (selected) {
+    // Selection state highlight style (blue outline)
+    edgeStyle.stroke = "#3b82f6";
+    edgeStyle.strokeWidth = 4;
+  } else if (edgeData) {
     const { relation_type, relation_subtype } = edgeData;
     
     if (relation_type === "spouse") {
@@ -60,7 +65,7 @@ export function CustomEdge({
         edgeStyle.strokeWidth = 3.5;       // Married is thick
       }
     } else {
-      // Parent -> Child colors (slate/violet scale)
+      // Parent -> Child colors (slate/indigo/purple scale)
       if (relation_subtype === "adopted") {
         edgeStyle.stroke = "#6366f1";      // Indigo
         edgeStyle.strokeDasharray = "6,4"; // Adopted dashed
@@ -83,11 +88,16 @@ export function CustomEdge({
     }
   };
 
+  const showLabel = selected || (edgeData as any)?.showLabel;
+  const labelText = edgeData?.relation_subtype
+    ? edgeData.relation_subtype.charAt(0).toUpperCase() + edgeData.relation_subtype.slice(1)
+    : (edgeData?.relation_type === "spouse" ? "Spouse" : "Parent");
+
   return (
     <>
       <BaseEdge path={edgePath} markerEnd={markerEnd} style={edgeStyle} />
       
-      {/* interactive floating delete button */}
+      {/* interactive floating delete button and labels */}
       <EdgeLabelRenderer>
         <div
           style={{
@@ -95,7 +105,7 @@ export function CustomEdge({
             transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
             pointerEvents: "all",
           }}
-          className="nodrag nopan group"
+          className="nodrag nopan group z-20"
         >
           <button
             onClick={handleDelete}
@@ -105,6 +115,19 @@ export function CustomEdge({
             <X className="h-3 w-3 shrink-0" />
           </button>
         </div>
+
+        {showLabel && edgeData && (
+          <div
+            style={{
+              position: "absolute",
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY - 18}px)`,
+              pointerEvents: "none",
+            }}
+            className="nodrag nopan select-none bg-zinc-900 dark:bg-zinc-100 border border-zinc-700 dark:border-zinc-300 text-[8px] font-bold px-1.5 py-0.5 rounded shadow-sm text-zinc-100 dark:text-zinc-900 uppercase tracking-widest leading-none z-10 animate-in fade-in zoom-in-95 duration-100"
+          >
+            {labelText}
+          </div>
+        )}
       </EdgeLabelRenderer>
     </>
   );

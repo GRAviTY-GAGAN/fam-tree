@@ -55,8 +55,8 @@ export function PersonNode({ data }: { data: PersonNodeData }) {
       {/* Handles for Hierarchical layout */}
       <Handle type="target" position={Position.Top} id="top" className="!w-1.5 !h-1.5 !bg-border hover:!bg-primary" />
       <Handle type="source" position={Position.Bottom} id="bottom" className="!w-1.5 !h-1.5 !bg-border hover:!bg-primary" />
-      <Handle type="source" position={Position.Left} id="left" className="!w-1.5 !h-1.5 !bg-border hover:!bg-primary" />
-      <Handle type="target" position={Position.Right} id="right" className="!w-1.5 !h-1.5 !bg-border hover:!bg-primary" />
+      <Handle type="target" position={Position.Left} id="left" className="!w-1.5 !h-1.5 !bg-border hover:!bg-primary" />
+      <Handle type="source" position={Position.Right} id="right" className="!w-1.5 !h-1.5 !bg-border hover:!bg-primary" />
 
       {/* Tiny Status Indicator Badge */}
       {!data.is_alive && (

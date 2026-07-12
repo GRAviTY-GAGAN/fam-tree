@@ -23,7 +23,7 @@ import { CustomEdge } from "@/components/custom-edge";
 import { 
   ArrowLeft, Plus, Download, Tag, Search, Eye, Share2, 
   Trash2, UserPlus, Info, Check, GitCommit, Heart, Loader2, Sparkles, Network,
-  Menu, ChevronLeft, ShieldAlert
+  Menu, ChevronLeft, ShieldAlert, Save, ChevronUp, ChevronDown
 } from "lucide-react";
 import {
   Select,
@@ -32,6 +32,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 // Register custom React Flow node/edge render mappings
 const nodeTypes = {
@@ -68,8 +77,8 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[]): { nodes: Node[]; edg
     // Spouse nodes are pinned adjacent using weights and minlen rules in dagre
     const isSpouse = edge.sourceHandle === "left" || edge.sourceHandle === "right" || edge.targetHandle === "left" || edge.targetHandle === "right";
     dagreGraph.setEdge(edge.source, edge.target, {
-      weight: isSpouse ? 10 : 1,
-      minlen: isSpouse ? 1 : 1
+      weight: isSpouse ? 20 : 1,
+      minlen: isSpouse ? 1 : 2
     });
   });
 
@@ -84,6 +93,74 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[]): { nodes: Node[]; edg
         y: nodeWithPosition.y - 40   // Offset by half height to center node
       }
     };
+  });
+
+  // Post-process spouse node alignment to sit side-by-side on exact same vertical level (rank)
+  const spouseEdges = edges.filter(edge => 
+    edge.sourceHandle === "left" || 
+    edge.sourceHandle === "right" || 
+    edge.targetHandle === "left" || 
+    edge.targetHandle === "right"
+  );
+
+  spouseEdges.forEach(edge => {
+    const sourceNode = newNodes.find(n => n.id === edge.source);
+    const targetNode = newNodes.find(n => n.id === edge.target);
+    if (sourceNode && targetNode) {
+      targetNode.position.y = sourceNode.position.y;
+      
+      const gap = 340; // Maintain standard spacing for neat visual link line rendering
+      if (Math.abs(targetNode.position.x - sourceNode.position.x) < gap) {
+        if (targetNode.position.x > sourceNode.position.x) {
+          targetNode.position.x = sourceNode.position.x + gap;
+        } else {
+          targetNode.position.x = sourceNode.position.x - gap;
+        }
+      }
+    }
+  });
+
+  // Post-process sibling node horizontal ordering
+  // Group children by parent node
+  const parentToChildren = new Map<string, string[]>();
+  edges.forEach(edge => {
+    // Parent-child edges have sourceHandle = "bottom" / targetHandle = "top"
+    const isParentLink = edge.sourceHandle === "bottom" || edge.targetHandle === "top"; 
+    if (isParentLink) {
+      if (!parentToChildren.has(edge.source)) {
+        parentToChildren.set(edge.source, []);
+      }
+      parentToChildren.get(edge.source)!.push(edge.target);
+    }
+  });
+
+  parentToChildren.forEach((childIds, parentId) => {
+    // Unique children in current newNodes
+    const siblingNodes = newNodes.filter(n => childIds.includes(n.id));
+    if (siblingNodes.length > 1) {
+      // Find the corresponding parent-child edge for each sibling node to read its sort_order
+      const siblingWithOrder = siblingNodes.map(node => {
+        const edge = edges.find(e => e.source === parentId && e.target === node.id);
+        const order = (edge?.data as any)?.sort_order ?? 1;
+        const rawData = node.data as any;
+        const birth = rawData?.birth_date ? new Date(rawData.birth_date).getTime() : Infinity;
+        return { node, order, birth };
+      });
+
+      // Sort siblings by sort_order first, then birth date fallback
+      siblingWithOrder.sort((a, b) => {
+        if (a.order !== b.order) return a.order - b.order;
+        return a.birth - b.birth;
+      });
+
+      // Collect current horizontal x-positions and sort them ascending
+      const xCoords = siblingNodes.map(n => n.position.x).sort((a, b) => a - b);
+
+      // Re-assign sorted x-positions back to the nodes in sorted sequence
+      siblingWithOrder.forEach((item, idx) => {
+        item.node.position.x = xCoords[idx];
+      });
+    }
   });
 
   return { nodes: newNodes, edges };
@@ -169,6 +246,13 @@ function Canvas({
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   
+  // Custom interactive states
+  const [showEdgeLabels, setShowEdgeLabels] = useState(false);
+  const [isLegendOpen, setIsLegendOpen] = useState(true);
+  const [pendingSortOrders, setPendingSortOrders] = useState<Record<string, number>>({});
+  const [isSavingSortOrders, setIsSavingSortOrders] = useState(false);
+  const [isAddingFloating, setIsAddingFloating] = useState(false);
+  
   // RAW Database state
   const [dbPeople, setDbPeople] = useState<any[]>([]);
   const [dbRelations, setDbRelations] = useState<any[]>([]);
@@ -195,13 +279,69 @@ function Canvas({
   const [selectedPerson, setSelectedPerson] = useState<any | null>(null);
   const [drawerTab, setDrawerTab] = useState<"profile" | "edit" | "relations">("profile");
 
+  // Computed connection collections for details drawer Tab 3
+  const spouses = useMemo(() => {
+    if (!selectedPerson) return [];
+    return dbRelations
+      .filter(r => r.relation_type === "spouse" && (r.person_id === selectedPerson.person_id || r.related_person_id === selectedPerson.person_id))
+      .map(rel => {
+        const partnerId = rel.person_id === selectedPerson.person_id ? rel.related_person_id : rel.person_id;
+        const spouse = dbPeople.find(p => p.person_id === partnerId);
+        return { rel, spouse };
+      })
+      .filter(item => item.spouse !== undefined)
+      .sort((a, b) => {
+        const aOrder = pendingSortOrders[a.rel.relationship_id] ?? a.rel.sort_order ?? 1;
+        const bOrder = pendingSortOrders[b.rel.relationship_id] ?? b.rel.sort_order ?? 1;
+        return aOrder - bOrder;
+      }) as { rel: any; spouse: any }[];
+  }, [selectedPerson, dbRelations, dbPeople, pendingSortOrders]);
+
+  const parents = useMemo(() => {
+    if (!selectedPerson) return [];
+    return dbRelations
+      .filter(r => r.relation_type === "parent" && r.related_person_id === selectedPerson.person_id)
+      .map(rel => {
+        const parent = dbPeople.find(p => p.person_id === rel.person_id);
+        return { rel, parent };
+      })
+      .filter(item => item.parent !== undefined) as { rel: any; parent: any }[];
+  }, [selectedPerson, dbRelations, dbPeople]);
+
+  const childrenRels = useMemo(() => {
+    if (!selectedPerson) return [];
+    return dbRelations
+      .filter(r => r.relation_type === "parent" && r.person_id === selectedPerson.person_id)
+      .map(rel => {
+        const child = dbPeople.find(p => p.person_id === rel.related_person_id);
+        return { rel, child };
+      })
+      .filter(item => item.child !== undefined)
+      .sort((a, b) => {
+        const aOrder = pendingSortOrders[a.rel.relationship_id] ?? a.rel.sort_order ?? 1;
+        const bOrder = pendingSortOrders[b.rel.relationship_id] ?? b.rel.sort_order ?? 1;
+        return aOrder - bOrder;
+      }) as { rel: any; child: any }[];
+  }, [selectedPerson, dbRelations, dbPeople, pendingSortOrders]);
+
+  const hasPendingChanges = useMemo(() => {
+    return Object.entries(pendingSortOrders).some(([relId, order]) => {
+      const rel = dbRelations.find(r => r.relationship_id === relId);
+      return rel && (rel.sort_order ?? 1) !== order;
+    });
+  }, [pendingSortOrders, dbRelations]);
+
   // Dynamic custom attributes
   const [customKey, setCustomKey] = useState("");
   const [customVal, setCustomVal] = useState("");
 
   // Relation builder setups
   const [relActionType, setRelActionType] = useState<"parent" | "spouse" | "child" | null>(null);
+  const [newTargetSortOrder, setNewTargetSortOrder] = useState<number>(1);
   
+  // Deletion confirm modal states
+  const [deleteConfirmPerson, setDeleteConfirmPerson] = useState<any | null>(null);
+  const [deleteConfirmRelationId, setDeleteConfirmRelationId] = useState<string | null>(null);
   // Responsive sidebar collapse controls
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [relLinkMode, setRelLinkMode] = useState<"existing" | "new">("existing");
@@ -314,28 +454,10 @@ function Canvas({
           id: rel.relationship_id,
           relation_type: rel.relation_type,
           relation_subtype: rel.relation_subtype,
-          onDeleteRelation: async (relId: string) => {
-            if (confirm("Are you sure you want to delete this relationship link line?")) {
-              try {
-                const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/relationships/${relId}`, {
-                  method: "DELETE",
-                  headers: { Authorization: `Bearer ${token}` }
-                });
-                if (res.ok) {
-                  await loadTreeContext();
-                  setToast({ message: "Relationship connection deleted successfully.", type: "success" });
-                  setTimeout(() => setToast(null), 3000);
-                } else {
-                  const errData = await res.json().catch(() => ({}));
-                  setToast({ message: errData.detail || "Failed to delete relationship connection.", type: "error" });
-                  setTimeout(() => setToast(null), 4000);
-                }
-              } catch (e) {
-                console.error(e);
-                setToast({ message: "Failed to delete relationship connection.", type: "error" });
-                setTimeout(() => setToast(null), 4000);
-              }
-            }
+          sort_order: pendingSortOrders[rel.relationship_id] ?? rel.sort_order ?? 1,
+          showLabel: showEdgeLabels, // Pass global edge labels view state
+          onDeleteRelation: (relId: string) => {
+            setDeleteConfirmRelationId(relId);
           }
         }
       };
@@ -358,8 +480,41 @@ function Canvas({
       }
     }
 
+    // Sort nodes to establish sibling and spouse sequence orders
+    const sortedNodesToDisplay = [...nodesToDisplay].sort((a, b) => {
+      // 1. Sibling sort order check (parent-child relationship)
+      const aParentRel = dbRelations.find(r => r.relation_type === "parent" && r.related_person_id === a.person_id);
+      const bParentRel = dbRelations.find(r => r.relation_type === "parent" && r.related_person_id === b.person_id);
+      if (aParentRel && bParentRel && aParentRel.person_id === bParentRel.person_id) {
+        // They share the same parent node: resolve sort order (with pending state fallback, then DB, then birth date)
+        const aOrder = pendingSortOrders[aParentRel.relationship_id] ?? aParentRel.sort_order ?? 1;
+        const bOrder = pendingSortOrders[bParentRel.relationship_id] ?? bParentRel.sort_order ?? 1;
+        if (aOrder !== bOrder) return aOrder - bOrder;
+      }
+      
+      // 2. Spouse sort order check (multiple marriages of same spouse)
+      const aSpouseRel = dbRelations.find(r => r.relation_type === "spouse" && (r.person_id === a.person_id || r.related_person_id === a.person_id));
+      const bSpouseRel = dbRelations.find(r => r.relation_type === "spouse" && (r.person_id === b.person_id || r.related_person_id === b.person_id));
+      if (aSpouseRel && bSpouseRel) {
+        const aPartner = aSpouseRel.person_id === a.person_id ? aSpouseRel.related_person_id : aSpouseRel.person_id;
+        const bPartner = bSpouseRel.person_id === b.person_id ? bSpouseRel.related_person_id : bSpouseRel.person_id;
+        if (aPartner === bPartner) {
+          const aOrder = pendingSortOrders[aSpouseRel.relationship_id] ?? aSpouseRel.sort_order ?? 1;
+          const bOrder = pendingSortOrders[bSpouseRel.relationship_id] ?? bSpouseRel.sort_order ?? 1;
+          if (aOrder !== bOrder) return aOrder - bOrder;
+        }
+      }
+      
+      // 3. Fallback: birth date
+      const aBirth = a.birth_date ? new Date(a.birth_date).getTime() : Infinity;
+      const bBirth = b.birth_date ? new Date(b.birth_date).getTime() : Infinity;
+      if (aBirth !== bBirth) return aBirth - bBirth;
+      
+      return a.name.localeCompare(b.name);
+    });
+
     // Wrap nodes for React Flow custom cards
-    const mappedNodes: Node[] = nodesToDisplay.map((p) => {
+    const mappedNodes: Node[] = sortedNodesToDisplay.map((p) => {
       return {
         id: p.person_id,
         type: "person",
@@ -377,7 +532,19 @@ function Canvas({
     const layout = getLayoutedElements(mappedNodes, edgesToDisplay);
     setNodes(layout.nodes);
     setEdges(layout.edges);
-  }, [dbPeople, dbRelations, activeComponentIndex, handleAvatarLightbox, handleNodeInspect, token, loadTreeContext, setNodes, setEdges]);
+  }, [
+    dbPeople,
+    dbRelations,
+    activeComponentIndex,
+    handleAvatarLightbox,
+    handleNodeInspect,
+    token,
+    loadTreeContext,
+    setNodes,
+    setEdges,
+    showEdgeLabels,
+    pendingSortOrders
+  ]);
 
   useEffect(() => {
     processCanvasGraph();
@@ -385,6 +552,8 @@ function Canvas({
 
   // Create isolated floating person
   const handleAddFloatingPerson = async () => {
+    if (isAddingFloating) return;
+    setIsAddingFloating(true);
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/people`, {
         method: "POST",
@@ -413,6 +582,8 @@ function Canvas({
       console.error(e);
       setToast({ message: "Failed to add new person.", type: "error" });
       setTimeout(() => setToast(null), 4000);
+    } finally {
+      setIsAddingFloating(false);
     }
   };
 
@@ -463,32 +634,107 @@ function Canvas({
     }
   };
 
-  // Delete individual member node
-  const handleDeleteMember = async () => {
-    if (!selectedPerson || !token) return;
-    const confirmMsg = `Are you sure you want to delete ${selectedPerson.name}? This will permanently remove this person from the tree, along with all of their relationship connection lines. Other family members themselves will not be deleted.`;
-    
-    if (confirm(confirmMsg)) {
-      try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/people/${selectedPerson.person_id}`, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${token}` }
+  const handleDeleteRelation = (relId: string) => {
+    setDeleteConfirmRelationId(relId);
+  };
+
+  const handleDeleteRelationConfirm = async () => {
+    if (!deleteConfirmRelationId) return;
+    const relId = deleteConfirmRelationId;
+    setDeleteConfirmRelationId(null);
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/relationships/${relId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        // Clear any pending sort order for this relation if it exists
+        setPendingSortOrders(prev => {
+          const copy = { ...prev };
+          delete copy[relId];
+          return copy;
         });
-        if (res.ok) {
-          setSelectedPerson(null);
-          await loadTreeContext();
-          setToast({ message: "Member deleted successfully.", type: "success" });
-          setTimeout(() => setToast(null), 3000);
-        } else {
-          const errData = await res.json().catch(() => ({}));
-          setToast({ message: errData.detail || "Failed to delete member.", type: "error" });
-          setTimeout(() => setToast(null), 4000);
-        }
-      } catch (err) {
-        console.error(err);
-        setToast({ message: "Failed to delete member.", type: "error" });
+        await loadTreeContext();
+        setToast({ message: "Relationship connection deleted successfully.", type: "success" });
+        setTimeout(() => setToast(null), 3000);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setToast({ message: errData.detail || "Failed to delete relationship connection.", type: "error" });
         setTimeout(() => setToast(null), 4000);
       }
+    } catch (e) {
+      console.error(e);
+      setToast({ message: "Failed to delete relationship connection.", type: "error" });
+      setTimeout(() => setToast(null), 4000);
+    }
+  };
+
+  const handleSaveSortOrders = async () => {
+    if (Object.keys(pendingSortOrders).length === 0) return;
+    setIsSavingSortOrders(true);
+    try {
+      const updatesList = Object.entries(pendingSortOrders).map(([id, val]) => ({
+        relationship_id: id,
+        sort_order: val
+      }));
+      
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/relationships/batch`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ updates: updatesList })
+      });
+      
+      if (res.ok) {
+        setPendingSortOrders({});
+        await loadTreeContext();
+        setToast({ message: "Relationship ordering saved successfully.", type: "success" });
+        setTimeout(() => setToast(null), 3000);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setToast({ message: errData.detail || "Failed to save relationship ordering.", type: "error" });
+        setTimeout(() => setToast(null), 4000);
+      }
+    } catch (e) {
+      console.error(e);
+      setToast({ message: "Failed to save relationship ordering.", type: "error" });
+      setTimeout(() => setToast(null), 4000);
+    } finally {
+      setIsSavingSortOrders(false);
+    }
+  };
+
+  // Delete individual member node
+  const handleDeleteMember = () => {
+    if (!selectedPerson) return;
+    setDeleteConfirmPerson(selectedPerson);
+  };
+
+  const handleDeleteMemberConfirm = async () => {
+    if (!deleteConfirmPerson || !token) return;
+    const pId = deleteConfirmPerson.person_id;
+    setDeleteConfirmPerson(null);
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/people/${pId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setSelectedPerson(null);
+        await loadTreeContext();
+        setToast({ message: "Member deleted successfully.", type: "success" });
+        setTimeout(() => setToast(null), 3000);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setToast({ message: errData.detail || "Failed to delete member.", type: "error" });
+        setTimeout(() => setToast(null), 4000);
+      }
+    } catch (err) {
+      console.error(err);
+      setToast({ message: "Failed to delete member.", type: "error" });
+      setTimeout(() => setToast(null), 4000);
     }
   };
 
@@ -713,13 +959,15 @@ function Canvas({
           person_id: sourceId,
           related_person_id: targetPersonId,
           relation_type: rType,
-          relation_subtype: newTargetRelSubtype
+          relation_subtype: newTargetRelSubtype,
+          sort_order: newTargetSortOrder
         })
       });
 
       if (relRes.ok) {
         setRelActionType(null);
         setExistingTargetId("");
+        setNewTargetSortOrder(1);
         await loadTreeContext();
         // Update selected person reference to stay fresh
         const fresh = dbPeople.find(p => p.person_id === selectedPerson.person_id);
@@ -905,10 +1153,15 @@ function Canvas({
             
             <button
               onClick={handleAddFloatingPerson}
+              disabled={isAddingFloating}
               title="Create Floating Isolation Node"
-              className="p-1 rounded border border-border hover:bg-muted hover:text-primary transition"
+              className="p-1 rounded border border-border hover:bg-muted hover:text-primary transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <UserPlus className="h-3.5 w-3.5" />
+              {isAddingFloating ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <UserPlus className="h-3.5 w-3.5" />
+              )}
             </button>
           </div>
 
@@ -934,7 +1187,7 @@ function Canvas({
               subgraphData.floatingPool.map((fp) => (
                 <div
                   key={fp.id}
-                  onClick={() => handleNodeInspect(fp)}
+                  onClick={() => handleNodeInspect({ id: fp.person_id })}
                   className="flex items-center justify-between p-2 bg-card border border-border/80 hover:border-border/100 hover:bg-muted/10 rounded transition duration-100 cursor-pointer"
                 >
                   <div className="flex items-center gap-2 min-w-0">
@@ -977,10 +1230,15 @@ function Canvas({
             </p>
             <button
               onClick={handleAddFloatingPerson}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold text-sm transition"
+              disabled={isAddingFloating}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <Plus className="h-4 w-4" />
-              Add First Member
+              {isAddingFloating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4" />
+              )}
+              <span>Add First Member</span>
             </button>
           </div>
         ) : (
@@ -1000,7 +1258,17 @@ function Canvas({
               <Controls showInteractive={false} position="bottom-right" className="!bg-card !border-border" />
               
               {/* Overlay operations controllers */}
-              <Panel position="top-right" className="flex items-center gap-2 bg-card border border-border p-1 rounded-md shadow-sm">
+              <Panel position="top-right" className="flex items-center gap-3 bg-card border border-border p-1 px-2 rounded-md shadow-sm select-none">
+                <label className="flex items-center gap-1.5 cursor-pointer text-[10px] uppercase font-bold text-muted-foreground hover:text-foreground transition py-0.5 px-1 rounded">
+                  <input
+                    type="checkbox"
+                    checked={showEdgeLabels}
+                    onChange={(e) => setShowEdgeLabels(e.target.checked)}
+                    className="accent-primary h-3 w-3 rounded border-border cursor-pointer"
+                  />
+                  <span>Show Labels</span>
+                </label>
+                <div className="h-3.5 w-[1px] bg-border/60" />
                 <button
                   onClick={handleExportCanvasImage}
                   title="Export High-Res Canvas Snapshot"
@@ -1009,6 +1277,64 @@ function Canvas({
                   <Download className="h-3.5 w-3.5 text-primary" />
                   <span>export.png</span>
                 </button>
+              </Panel>
+
+              {/* Floating Legend Key */}
+              <Panel position="bottom-left" className={`bg-card/95 backdrop-blur-xs border border-border p-2 rounded-lg shadow-md select-none transition-all duration-200 ${isLegendOpen ? "w-[260px] max-w-[280px]" : "w-8 h-8 flex items-center justify-center cursor-pointer hover:bg-muted"}`} onClick={() => { if (!isLegendOpen) setIsLegendOpen(true); }}>
+                {!isLegendOpen ? (
+                  <button
+                    type="button"
+                    title="Expand Relationship Legend"
+                    className="p-1 text-muted-foreground hover:text-foreground transition flex items-center justify-center"
+                  >
+                    <Info className="h-4 w-4 text-primary" />
+                  </button>
+                ) : (
+                  <div className="space-y-2 text-[10px]">
+                    <div className="flex items-center justify-between gap-4 font-bold uppercase tracking-wider text-muted-foreground text-[9px] border-b pb-1">
+                      <span>Relationship Legend</span>
+                      <button 
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsLegendOpen(false);
+                        }}
+                        title="Collapse Legend"
+                        className="hover:text-foreground text-muted-foreground transition p-0.5"
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-foreground/80 font-medium animate-in fade-in duration-200">
+                      <div className="flex items-center gap-2">
+                        <div className="h-[3px] w-6 bg-[#e11d48] shrink-0" />
+                        <span>Spouse (Married)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="h-[2px] w-6 bg-[#94a3b8] shrink-0" />
+                        <span>Child (Biological)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="h-[2px] w-6 bg-[#f43f5e] border-t border-dashed shrink-0" style={{ borderTop: "2px dashed #f43f5e" }} />
+                        <span>Spouse (Divorced)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="h-[2px] w-6 bg-[#6366f1] border-t border-dashed shrink-0" style={{ borderTop: "2px dashed #6366f1" }} />
+                        <span>Child (Adopted)</span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-nowrap">
+                        <div className="h-[20px] flex items-center justify-center shrink-0 w-6 font-semibold">
+                          <div className="h-0 w-full border-t-2 border-dotted border-[#a855f7]" style={{ borderTop: "2px dotted #a855f7" }} />
+                        </div>
+                        <span>Child (Step)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="h-[4px] w-6 bg-[#3b82f6] shrink-0" />
+                        <span>Selected / Active</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </Panel>
             </ReactFlow>
           </div>
@@ -1124,7 +1450,8 @@ function Canvas({
                               <span>{String(val)}</span>
                               <button 
                                 onClick={() => handleDeleteCustomAttribute(key)}
-                                className="p-0.5 text-muted-foreground hover:text-destructive transition rounded"
+                                className="p-0.5 text-destructive hover:bg-destructive/10 transition rounded"
+                                title="Delete Attribute"
                               >
                                 &times;
                               </button>
@@ -1341,7 +1668,193 @@ function Canvas({
 
               {/* TAB 3: RELATION LINKS BUILDER */}
               {drawerTab === "relations" && (
-                <div className="space-y-6">
+                <div className="space-y-6 max-h-[75vh] overflow-y-auto pb-4 pr-1">
+                  
+                  {/* Current Active Connections list */}
+                  <div className="space-y-4 border-b border-border pb-5 select-none">
+                    <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest block">
+                      Current Connections
+                    </span>
+                    
+                    {/* Spouses */}
+                    <div className="space-y-1.5">
+                      <div className="text-[10px] uppercase font-bold text-muted-foreground/60 tracking-wider">
+                        Spouses / Partners
+                      </div>
+                      {spouses.length === 0 ? (
+                        <p className="text-xs text-muted-foreground/40 italic pl-1 py-1">No spouse connections yet</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {spouses.map(({ rel, spouse }) => {
+                            const currentVal = pendingSortOrders[rel.relationship_id] ?? rel.sort_order ?? 1;
+                            return (
+                              <div key={rel.relationship_id} className="flex items-center justify-between bg-muted/30 border border-border/80 rounded-lg p-2 text-xs">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className="font-semibold text-foreground truncate">{spouse.name}</span>
+                                  <span className="text-[9px] text-muted-foreground/80 capitalize bg-background px-1.5 py-0.5 rounded border leading-none shrink-0 animate-pulse-once">
+                                    {rel.relation_subtype || "spouse"}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <Select
+                                    value={String(currentVal)}
+                                    onValueChange={(val) => {
+                                      const order = parseInt(val || "1", 10);
+                                      setPendingSortOrders(prev => ({
+                                        ...prev,
+                                        [rel.relationship_id]: order
+                                      }));
+                                    }}
+                                  >
+                                    <SelectTrigger className="h-[24px] px-1.5 py-0 text-[10px] bg-background border border-border rounded-md font-semibold select-none [&_svg]:size-3">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent className="bg-popover border border-border rounded-lg p-1 text-[10px] text-foreground shadow-md w-28">
+                                      {[1, 2, 3, 4, 5].map(o => (
+                                        <SelectItem key={o} value={String(o)}>Spouse {o}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    onClick={() => handleDeleteRelation(rel.relationship_id)}
+                                    title="Disconnect Spouse"
+                                    className="text-destructive border border-transparent hover:border-destructive hover:bg-destructive/15"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Parents */}
+                    <div className="space-y-1.5">
+                      <div className="text-[10px] uppercase font-bold text-muted-foreground/60 tracking-wider">
+                        Parents
+                      </div>
+                      {parents.length === 0 ? (
+                        <p className="text-xs text-muted-foreground/40 italic pl-1 py-1">No parent connections yet</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {parents.map(({ rel, parent }) => (
+                            <div key={rel.relationship_id} className="flex items-center justify-between bg-muted/30 border border-border/80 rounded-lg p-2 text-xs">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="font-semibold text-foreground truncate">{parent.name}</span>
+                                <span className="text-[9px] text-muted-foreground/80 capitalize bg-background px-1.5 py-0.5 rounded border leading-none shrink-0">
+                                  {rel.relation_subtype || "parent"}
+                                </span>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-xs"
+                                onClick={() => handleDeleteRelation(rel.relationship_id)}
+                                title="Disconnect Parent"
+                                className="text-destructive border border-transparent hover:border-destructive hover:bg-destructive/15 shrink-0"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Children */}
+                    <div className="space-y-1.5">
+                      <div className="text-[10px] uppercase font-bold text-muted-foreground/60 tracking-wider">
+                        Children
+                      </div>
+                      {childrenRels.length === 0 ? (
+                        <p className="text-xs text-muted-foreground/40 italic pl-1 py-1">No children connections yet</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {childrenRels.map(({ rel, child }) => {
+                            const currentVal = pendingSortOrders[rel.relationship_id] ?? rel.sort_order ?? 1;
+                            return (
+                              <div key={rel.relationship_id} className="flex items-center justify-between bg-muted/30 border border-border/80 rounded-lg p-2 text-xs">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className="font-semibold text-foreground truncate">{child.name}</span>
+                                  <span className="text-[9px] text-muted-foreground/80 capitalize bg-background px-1.5 py-0.5 rounded border leading-none shrink-0 text-center">
+                                    {rel.relation_subtype || "child"}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <Select
+                                    value={String(currentVal)}
+                                    onValueChange={(val) => {
+                                      const order = parseInt(val || "1", 10);
+                                      setPendingSortOrders(prev => ({
+                                        ...prev,
+                                        [rel.relationship_id]: order
+                                      }));
+                                    }}
+                                  >
+                                    <SelectTrigger className="h-[24px] px-1.5 py-0 text-[10px] bg-background border border-border rounded-md font-semibold select-none [&_svg]:size-3">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent className="bg-popover border border-border rounded-lg p-1 text-[10px] text-foreground shadow-md w-28">
+                                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(o => (
+                                        <SelectItem key={o} value={String(o)}>Child {o}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    onClick={() => handleDeleteRelation(rel.relationship_id)}
+                                    title="Disconnect Child"
+                                    className="text-destructive border border-transparent hover:border-destructive hover:bg-destructive/15"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Batch Save Button */}
+                    {hasPendingChanges && (
+                      <div className="pt-2 flex gap-2">
+                        <Button
+                          type="button"
+                          variant="default"
+                          size="sm"
+                          onClick={handleSaveSortOrders}
+                          disabled={isSavingSortOrders}
+                          className="flex-1 font-bold shadow-sm"
+                        >
+                          {isSavingSortOrders ? (
+                            <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+                          ) : (
+                            <Save className="h-3 w-3 shrink-0" />
+                          )}
+                          <span>Save changes</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setPendingSortOrders({})}
+                          disabled={isSavingSortOrders}
+                          className="flex-1 font-semibold"
+                        >
+                          Discard changes
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+
                   {/* Select actions trigger */}
                   {!relActionType ? (
                     <div className="space-y-3">
@@ -1499,6 +2012,32 @@ function Canvas({
                         )}
                       </div>
 
+                      {/* Sequence sorting order selector */}
+                      <div>
+                        <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-1">
+                          Sequence Order / Sort Position
+                        </label>
+                        <Select
+                          value={String(newTargetSortOrder)}
+                          onValueChange={(val) => setNewTargetSortOrder(parseInt(val || "1", 10))}
+                        >
+                          <SelectTrigger className="w-full h-10 px-3 text-sm bg-muted border border-border rounded-lg focus-visible:ring-0 [&_svg]:size-4">
+                            <SelectValue placeholder="Select Order" />
+                          </SelectTrigger>
+                          <SelectContent className="bg-popover border border-border rounded-lg p-1 text-xs text-foreground shadow-md w-[var(--anchor-width)]">
+                            {relActionType === "spouse" ? (
+                              [1, 2, 3, 4, 5].map(o => (
+                                <SelectItem key={o} value={String(o)}>Spouse / Partner {o}</SelectItem>
+                              ))
+                            ) : (
+                              [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(o => (
+                                <SelectItem key={o} value={String(o)}>Child / Sibling {o}</SelectItem>
+                              ))
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
                       <div className="pt-2 flex justify-end gap-3">
                         <button
                           type="button"
@@ -1557,6 +2096,93 @@ function Canvas({
           </div>
         </div>
       )}
+
+      {/* 5. MEMBER PROFILE DELETE CONFIRMATION MODAL */}
+      <Dialog 
+        open={!!deleteConfirmPerson} 
+        onOpenChange={(open) => {
+          if (!open) setDeleteConfirmPerson(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Family Member?</DialogTitle>
+            <DialogDescription>
+              {deleteConfirmPerson && (
+                (() => {
+                  const relCount = dbRelations.filter(r => 
+                    r.person_id === deleteConfirmPerson.person_id || 
+                    r.related_person_id === deleteConfirmPerson.person_id
+                  ).length;
+
+                  if (relCount === 0) {
+                    return (
+                      <span>
+                        Are you sure you want to delete <strong className="text-foreground">{deleteConfirmPerson.name}</strong>? This will permanently remove this person from the family tree.
+                      </span>
+                    );
+                  }
+                  
+                  return (
+                    <span>
+                      Are you sure you want to delete <strong className="text-foreground">{deleteConfirmPerson.name}</strong>? This will permanently remove this person from the tree, along with all of their {relCount} relationship connection {relCount > 1 ? "lines" : "line"}. Other family members themselves will not be deleted.
+                    </span>
+                  );
+                })()
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4 flex gap-2 justify-end">
+            <Button
+              variant="outline"
+              onClick={() => setDeleteConfirmPerson(null)}
+              type="button"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteMemberConfirm}
+              type="button"
+            >
+              Delete Member
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 6. RELATIONSHIP LINK DELETE CONFIRMATION MODAL */}
+      <Dialog 
+        open={!!deleteConfirmRelationId} 
+        onOpenChange={(open) => {
+          if (!open) setDeleteConfirmRelationId(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Connection Link?</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this relationship link line? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4 flex gap-2 justify-end">
+            <Button
+              variant="outline"
+              onClick={() => setDeleteConfirmRelationId(null)}
+              type="button"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteRelationConfirm}
+              type="button"
+            >
+              Disconnect
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
