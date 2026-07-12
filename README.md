@@ -47,19 +47,55 @@ fam-tree/
 ## 🚀 Local Development Setup
 
 ### 1. Set Up the Backend
-Navigate to the `backend` folder, create a virtual environment, install dependencies, and start the development reload server:
+Navigate to the `backend` folder, create a virtual environment, and install dependencies:
 
 ```bash
 cd backend
 python -m venv venv
-# On Windows powershell:
-.\venv\Scripts\activate
-# On Linux/macOS:
-source venv/bin/activate
-
-pip install -r requirements.txt
-python -m uvicorn app.main:app --port 8000 --reload
 ```
+
+#### Option 1: Direct Execution (Recommended & Foolproof)
+You do not need to activate the virtual environment manually. You can run Uvicorn directly using the Python executable inside the virtual environment. This avoids any PowerShell script execution policy blocks:
+
+*   **On Windows (PowerShell/CMD):**
+    ```powershell
+    # Install dependencies first (via venv pip):
+    .\venv\Scripts\pip.exe install -r requirements.txt
+    
+    # Run Uvicorn directly:
+    .\venv\Scripts\python.exe -m uvicorn app.main:app --port=8000 --reload
+    ```
+*   **On Linux/macOS:**
+    ```bash
+    ./venv/bin/pip install -r requirements.txt
+    ./venv/bin/python -m uvicorn app.main:app --port=8000 --reload
+    ```
+
+#### Option 2: Activating the Virtual Environment First
+If you prefer to activate the virtual environment first, choose the appropriate command for your terminal:
+
+*   **On Windows PowerShell:**
+    ```powershell
+    # If script execution is blocked on your system, run this first in your session:
+    # Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
+    .\venv\Scripts\Activate.ps1
+    
+    # Install dependencies & start:
+    pip install -r requirements.txt
+    uvicorn app.main:app --port 8000 --reload
+    ```
+*   **On Windows CMD:**
+    ```cmd
+    .\venv\Scripts\activate.bat
+    pip install -r requirements.txt
+    uvicorn app.main:app --port 8000 --reload
+    ```
+*   **On Linux/macOS:**
+    ```bash
+    source venv/bin/activate
+    pip install -r requirements.txt
+    uvicorn app.main:app --port 8000 --reload
+    ```
 
 Create a `backend/.env` file with the following variables:
 ```env
