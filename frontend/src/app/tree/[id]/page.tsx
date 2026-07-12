@@ -23,7 +23,7 @@ import { CustomEdge } from "@/components/custom-edge";
 import { 
   ArrowLeft, Plus, Download, Tag, Search, Eye, Share2, 
   Trash2, UserPlus, Info, Check, GitCommit, Heart, Loader2, Sparkles, Network,
-  Menu, ChevronLeft, ShieldAlert, Save, ChevronUp, ChevronDown
+  Menu, ChevronLeft, ShieldAlert, Save, ChevronUp, ChevronDown, Link, Unlink
 } from "lucide-react";
 import {
   Select,
@@ -264,6 +264,8 @@ function Canvas({
 
   // Search filter
   const [searchQuery, setSearchQuery] = useState("");
+  const [targetSearchQuery, setTargetSearchQuery] = useState("");
+  const [isTargetDropdownOpen, setIsTargetDropdownOpen] = useState(false);
 
   // Subgraphs partitions split states
   const [activeComponentIndex, setActiveComponentIndex] = useState<number | "main">("main");
@@ -1031,6 +1033,17 @@ function Canvas({
     return dbPeople.filter(p => p.person_id !== selectedPerson.person_id);
   }, [dbPeople, selectedPerson]);
 
+  const filteredTargetCandidates = useMemo(() => {
+    if (!targetSearchQuery.trim()) return availableBondsBypersons;
+    const q = targetSearchQuery.toLowerCase();
+    return availableBondsBypersons.filter(p => p.name.toLowerCase().includes(q));
+  }, [availableBondsBypersons, targetSearchQuery]);
+
+  const existingTargetName = useMemo(() => {
+    const found = dbPeople.find(p => p.person_id === existingTargetId);
+    return found ? `${found.name} (${found.gender})` : "";
+  }, [existingTargetId, dbPeople]);
+
   const selectedPersonCustomFields = useMemo(() => {
     if (!selectedPerson) return {};
     try {
@@ -1147,8 +1160,11 @@ function Canvas({
         {/* Floating Pool Cards Deck */}
         <div className="flex-1 flex flex-col min-h-0">
           <div className="p-3 border-b border-border flex items-center justify-between">
-            <span className="text-[10px] font-bold text-muted-foreground/80 uppercase tracking-widest">
-              Unconnected Pool ({subgraphData.floatingPool.length})
+            <span className="text-[10px] font-bold text-muted-foreground/80 uppercase tracking-widest truncate max-w-[200px]" title={searchQuery.trim() ? "Search Results" : "Unconnected Pool"}>
+              {searchQuery.trim() 
+                ? `Search Results (${filteredSearchPeople.length})` 
+                : `Unconnected Pool (${subgraphData.floatingPool.length})`
+              }
             </span>
             
             <button
@@ -1178,33 +1194,70 @@ function Canvas({
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
-            {subgraphData.floatingPool.length === 0 ? (
-              <div className="text-center text-xs text-muted-foreground/40 py-6">
-                Pool is empty
-              </div>
-            ) : (
-              subgraphData.floatingPool.map((fp) => (
-                <div
-                  key={fp.id}
-                  onClick={() => handleNodeInspect({ id: fp.person_id })}
-                  className="flex items-center justify-between p-2 bg-card border border-border/80 hover:border-border/100 hover:bg-muted/10 rounded transition duration-100 cursor-pointer"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className="h-6 w-6 rounded-sm bg-muted border flex items-center justify-center font-mono font-bold text-[10px] text-muted-foreground shrink-0 overflow-hidden">
-                      {fp.photo_url ? (
-                        <img src={fp.photo_url} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        fp.name[0]
-                      )}
-                    </div>
-                    <span className="text-[11px] font-semibold text-foreground truncate">{fp.name}</span>
-                  </div>
-                  <span className="text-[8px] uppercase tracking-wider px-1 py-0.5 rounded border border-border/60 bg-muted/40 text-muted-foreground shrink-0">
-                    floating
-                  </span>
+          <div className="flex-1 overflow-y-auto p-3 space-y-1.5 bg-muted/5">
+            {!searchQuery.trim() ? (
+              subgraphData.floatingPool.length === 0 ? (
+                <div className="text-center text-xs text-muted-foreground/40 py-6">
+                  Pool is empty
                 </div>
-              ))
+              ) : (
+                subgraphData.floatingPool.map((fp) => (
+                  <div
+                    key={fp.person_id}
+                    onClick={() => handleNodeInspect({ id: fp.person_id })}
+                    className="flex items-center justify-between p-2 bg-card border border-border/80 hover:border-border/100 hover:bg-muted/10 rounded transition duration-100 cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="h-6 w-6 rounded-sm bg-muted border flex items-center justify-center font-mono font-bold text-[10px] text-muted-foreground shrink-0 overflow-hidden">
+                        {fp.photo_url ? (
+                          <img src={fp.photo_url} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          fp.name ? fp.name[0] : "?"
+                        )}
+                      </div>
+                      <span className="text-[11px] font-semibold text-foreground truncate">{fp.name}</span>
+                    </div>
+                    <div className="shrink-0 p-1.5 hover:bg-muted rounded transition" title="Unconnected Pool Member">
+                      <Unlink className="h-3.5 w-3.5 text-muted-foreground/60" />
+                    </div>
+                  </div>
+                ))
+              )
+            ) : (
+              filteredSearchPeople.length === 0 ? (
+                <div className="text-center text-xs text-muted-foreground/40 py-6">
+                  No members found
+                </div>
+              ) : (
+                filteredSearchPeople.map((fp) => {
+                  const isFloating = subgraphData.floatingPool.some(node => node.person_id === fp.person_id);
+                  return (
+                    <div
+                      key={fp.person_id}
+                      onClick={() => handleNodeInspect({ id: fp.person_id })}
+                      className="flex items-center justify-between p-2 bg-card border border-border/80 hover:border-border/100 hover:bg-muted/10 rounded transition duration-100 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="h-6 w-6 rounded-sm bg-muted border flex items-center justify-center font-mono font-bold text-[10px] text-muted-foreground shrink-0 overflow-hidden">
+                          {fp.photo_url ? (
+                            <img src={fp.photo_url} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            fp.name ? fp.name[0] : "?"
+                          )}
+                        </div>
+                        <span className="text-[11px] font-semibold text-foreground truncate">{fp.name}</span>
+                      </div>
+                      <div className="shrink-0 p-1.5 hover:bg-muted rounded transition" title={isFloating ? "Unconnected Pool Member" : "Connected Lineage Member"}>
+                        {isFloating ? (
+                          <Unlink className="h-3.5 w-3.5 text-muted-foreground/60" />
+                        ) : (
+                          <Link className="h-3.5 w-3.5 text-primary" />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )
             )}
           </div>
         </div>
@@ -1921,21 +1974,58 @@ function Canvas({
                             Choose Target Member
                           </label>
                           {availableBondsBypersons.length === 0 ? (
-                            <p className="text-xs text-muted-foreground italic">No other candidates inside target project database.</p>
+                            <p className="text-xs text-muted-foreground italic col-span-2">No other candidates inside target project database.</p>
                           ) : (
-                            <Select
-                              value={existingTargetId}
-                              onValueChange={(val) => setExistingTargetId(val || "")}
-                            >
-                              <SelectTrigger className="w-full h-10 px-3 text-sm bg-muted border border-border rounded-lg focus-visible:ring-0 [&_svg]:size-4">
-                                <SelectValue placeholder="-- Choose Name --" />
-                              </SelectTrigger>
-                              <SelectContent className="bg-popover border border-border rounded-lg p-1 text-xs text-foreground shadow-md max-h-60 overflow-y-auto w-[var(--anchor-width)]">
-                                {availableBondsBypersons.map(p => (
-                                  <SelectItem key={p.person_id} value={p.person_id}>{p.name} ({p.gender})</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <div className="relative">
+                              <input
+                                type="text"
+                                placeholder={existingTargetName ? existingTargetName : "-- Search name to choose --"}
+                                value={targetSearchQuery}
+                                onChange={(e) => {
+                                  setTargetSearchQuery(e.target.value);
+                                  setIsTargetDropdownOpen(true);
+                                }}
+                                onFocus={() => setIsTargetDropdownOpen(true)}
+                                className="w-full h-10 px-3 bg-muted border border-border rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-primary placeholder-foreground/80"
+                              />
+                              {isTargetDropdownOpen && (
+                                <>
+                                  {/* Close Click Backdrop overlay */}
+                                  <div 
+                                    className="fixed inset-0 z-40" 
+                                    onClick={() => {
+                                      setIsTargetDropdownOpen(false);
+                                      setTargetSearchQuery("");
+                                    }} 
+                                  />
+                                  <div className="absolute left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-popover border border-border rounded-lg p-1 text-xs text-foreground shadow-md z-50">
+                                    {filteredTargetCandidates.length === 0 ? (
+                                      <div className="text-center text-xs text-muted-foreground/60 py-3">
+                                        No members matched
+                                      </div>
+                                    ) : (
+                                      filteredTargetCandidates.map(p => (
+                                        <button
+                                          key={p.person_id}
+                                          type="button"
+                                          onClick={() => {
+                                            setExistingTargetId(p.person_id);
+                                            setTargetSearchQuery("");
+                                            setIsTargetDropdownOpen(false);
+                                          }}
+                                          className={`w-full text-left p-2 rounded hover:bg-muted font-semibold flex justify-between items-center transition duration-75 ${existingTargetId === p.person_id ? "bg-muted text-primary" : "text-foreground"}`}
+                                        >
+                                          <span>{p.name} ({p.gender})</span>
+                                          {existingTargetId === p.person_id && (
+                                            <Check className="h-3.5 w-3.5 text-primary shrink-0" />
+                                          )}
+                                        </button>
+                                      ))
+                                    )}
+                                  </div>
+                                </>
+                              )}
+                            </div>
                           )}
                         </div>
                       ) : (

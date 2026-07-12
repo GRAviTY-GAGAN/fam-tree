@@ -220,9 +220,10 @@ Upon fetching the list of people and relationships for a tree:
    * **Partial Trees**: Smaller clusters of size $\ge 2$ (e.g., an uncle's family of 3 whom you haven't linked to the grandfather yet).
    * **Unconnected People**: Single nodes (size 1) representing individuals with zero relationship edges.
 
-### UI Representation
+### UI Representation & Search Member Filter
 Instead of rendering multiple floating tree clusters on the canvas (which causes visual clutter and sorting problems), we handle them in a collapsible **Sidebar Pooling Deck** on the right side of the screen:
-* **"Unconnected People" Tab**: A lists of names/avatars. Clicking them lets you edit their facts or prepare a relationship link.
+* **"Unconnected People" Tab / Search filter**: A list of names/avatars. Clicking them lets you edit their facts or prepare a relationship link.
+  - A search input box filters results. If active, searches the entire database, displaying matching items alongside status icons (`Link` for connected lineage members, and `Unlink` for unconnected pooling deck members).
 * **"Sub-Branches" Tab**: Lists cluster groups (e.g. *"Michael's Branch (3 people)"*). You can preview a mini-graph representation of any sub-branch.
 
 ### Merging Workflow

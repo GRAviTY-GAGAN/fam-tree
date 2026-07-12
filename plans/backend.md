@@ -89,6 +89,7 @@ class RelationshipLink(SQLModel, table=True):
     related_person_id: int = Field(foreign_key="person.id", ondelete="CASCADE")
     relation_type: str   # "spouse" | "parent"
     relation_subtype: Optional[str] = None  # parent: biological/adopted/step, spouse: married/partner/divorced
+    sort_order: Optional[int] = Field(default=1, nullable=True)
 ```
 
 ---
@@ -108,6 +109,7 @@ class RelationshipLink(SQLModel, table=True):
 | **DELETE** | `/api/v1/people/{person_id}` | Delete a Person (implicitly cleans up relations) | Yes |
 | **POST** | `/api/v1/media/upload` | Upload profile photo for a Person to Cloudinary | Yes |
 | **POST** | `/api/v1/relationships` | Add a new relationship between two persons | Yes |
+| **PUT** | `/api/v1/relationships/batch` | Batch update relationship sort sequences | Yes |
 | **DELETE** | `/api/v1/relationships/{relationship_id}` | Delete a relationship link | Yes |
 
 ---
