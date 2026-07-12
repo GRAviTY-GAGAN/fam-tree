@@ -21,10 +21,22 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS configurations for Next.js local development
+# CORS configurations supporting localhost and production domains
+origins = [
+    # UNCOMMENT the local ports below during local environment development:
+    # "http://localhost:3000",
+    # "http://127.0.0.1:3000",
+    "https://fam-tree-iota.vercel.app",
+]
+
+# Allow custom client origin if set in environment config
+custom_frontend_url = os.getenv("FRONTEND_URL")
+if custom_frontend_url:
+    origins.append(custom_frontend_url.rstrip("/"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

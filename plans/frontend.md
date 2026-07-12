@@ -162,7 +162,7 @@ Below is the layout specification for each screen, outlining core grids, compone
     * Clean dashed border outline containing a large outline `Plus` icon and "Create Tree".
     * Clicking triggers a Radix Dialog modal asking for **Name** and **Description**.
 
-### Screen C: Tree Canvas (`/tree/[id]`)
+### Screen C: Tree Canvas (`/tree/[tree_id]`)
 * **UI Skeleton**: Full-viewport height container (`h-screen overflow-hidden flex flex-col`).
 * **Header Navigation (Sticky Top)**:
   * Breadcrumb links: `Dashboard / Tree Name`

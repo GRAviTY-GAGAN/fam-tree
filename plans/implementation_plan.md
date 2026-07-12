@@ -8,9 +8,9 @@ This document outlines the architecture and implementation steps to build the Fa
   * **Visualization**: **React Flow** to render interactive, draggable nodes and connections.
   * **Auto-Layout**: **@dagrejs/dagre** to automatically arrange nodes hierarchically (parents above children, spouses adjacent).
 * **Backend**: FastAPI (Python) for standard performance, fast endpoints, and clean async patterns.
-* **Database**: **SQLite** for zero-setup local development, with models defined via **SQLModel** (SQLAlchemy). Since SQLModel interfaces with standard SQL database drivers, transitioning to **Neon PostgreSQL** for production is as simple as switching the `DATABASE_URL` environment variable.
-* **Storage (Photos)**: **Cloudinary** will be used exclusively for both local development and production. Uploaded photos are stored directly in Cloudinary, returning secure CDN links to be stored in the database.
-* **Dynamic Custom Fields**: Standard attributes (name, birthDate, alive, nativePlace, currentPlace, occupation) will be first-class columns. In addition, the `Person` model will contain a JSON-compatible string field `custom_fields` to support user-generated attributes.
+* **Database**: **PostgreSQL (Supabase)** is used for project production data storage. We connect using psycopg2 via PG-specific connection poolers. For local development, SQLModel connects to either the same database or a local SQLite instance seamlessly.
+* **Storage (Photos)**: **Cloudinary** is used exclusively for both local development and production. Uploaded photos are stored directly in Cloudinary, returning secure CDN links to be stored in the database.
+* **Dynamic Custom Fields**: Standard attributes (name, birthDate, alive, nativePlace, currentPlace, occupation) are first-class columns. In addition, the `Person` model contains a JSON-compatible string field `custom_fields` to support user-generated attributes.
 
 ---
 
@@ -20,6 +20,7 @@ This document outlines the architecture and implementation steps to build the Fa
 erDiagram
     User {
         int id PK
+        string user_id UK
         string email
         string google_id
         string name
@@ -27,12 +28,14 @@ erDiagram
     }
     Tree {
         int id PK
+        string tree_id UK
         string name
         string description
         int owner_id FK
     }
     Person {
         int id PK
+        string person_id UK
         int tree_id FK
         string name
         string gender
@@ -47,6 +50,7 @@ erDiagram
     }
     Relationship {
         int id PK
+        string relationship_id UK
         int tree_id FK
         int person_id FK
         int related_person_id FK

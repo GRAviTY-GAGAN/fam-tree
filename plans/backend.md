@@ -39,6 +39,7 @@ Authenticates solely via Google OAuth.
 ```python
 class User(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
     email: str = Field(unique=True, index=True)
     google_id: str = Field(unique=True, index=True)
     name: str
@@ -50,6 +51,7 @@ Each family tree belongs to a User.
 ```python
 class Tree(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    tree_id: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
     name: str
     description: Optional[str] = None
     owner_id: int = Field(foreign_key="user.id")
@@ -60,7 +62,8 @@ Represents a person in the family tree. Dynamic custom list are stored in a seri
 ```python
 class Person(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    tree_id: int = Field(foreign_key="tree.id", index=True)
+    person_id: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
+    tree_id: int = Field(foreign_key="tree.id", ondelete="CASCADE", index=True)
     name: str
     gender: str          # "male" | "female" | "other"
     birth_date: Optional[date] = None
@@ -70,19 +73,20 @@ class Person(SQLModel, table=True):
     current_place: Optional[str] = None
     occupation: Optional[str] = None
     photo_url: Optional[str] = None
-    
-    # Serialized JSON dictionary of custom attributes: e.g. {"Hobby": "Gardening"}
     custom_fields: str = Field(default="{}")
 ```
 
 ### Relationship Model
 Links two people representing hierarchical or horizontal links.
 ```python
-class Relationship(SQLModel, table=True):
+class RelationshipLink(SQLModel, table=True):
+    __tablename__ = "relationshiplink"
+    
     id: Optional[int] = Field(default=None, primary_key=True)
-    tree_id: int = Field(foreign_key="tree.id", index=True)
-    person_id: int = Field(foreign_key="person.id", ondelete="CASCADE", index=True) # Source
-    related_person_id: int = Field(foreign_key="person.id", ondelete="CASCADE")     # Target
+    relationship_id: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
+    tree_id: int = Field(foreign_key="tree.id", index=True, ondelete="CASCADE")
+    person_id: int = Field(foreign_key="person.id", ondelete="CASCADE", index=True)
+    related_person_id: int = Field(foreign_key="person.id", ondelete="CASCADE")
     relation_type: str   # "spouse" | "parent"
     relation_subtype: Optional[str] = None  # parent: biological/adopted/step, spouse: married/partner/divorced
 ```
@@ -97,14 +101,14 @@ class Relationship(SQLModel, table=True):
 | **GET** | `/api/v1/auth/me` | Fetch active User profiles details | Yes |
 | **GET** | `/api/v1/trees` | List all trees owned by active user | Yes |
 | **POST** | `/api/v1/trees` | Create a new tree | Yes |
-| **DELETE** | `/api/v1/trees/{id}` | Delete a tree | Yes |
-| **GET** | `/api/v1/trees/{id}/data` | Fetch entire tree: nodes (`people`) and edges (`relationships`) | Yes |
+| **DELETE** | `/api/v1/trees/{tree_id}` | Delete a tree | Yes |
+| **GET** | `/api/v1/trees/{tree_id}/data` | Fetch entire tree: nodes (`people`) and edges (`relationships`) | Yes |
 | **POST** | `/api/v1/people` | Create a new Person node in tree | Yes |
-| **PUT** | `/api/v1/people/{id}` | Update details/custom fields of target Person | Yes |
-| **DELETE** | `/api/v1/people/{id}` | Delete a Person (implicitly cleans up relations) | Yes |
-| **POST** | `/api/v1/people/{id}/photo` | Upload profile photo for a Person | Yes |
+| **PUT** | `/api/v1/people/{person_id}` | Update details/custom fields of target Person | Yes |
+| **DELETE** | `/api/v1/people/{person_id}` | Delete a Person (implicitly cleans up relations) | Yes |
+| **POST** | `/api/v1/media/upload` | Upload profile photo for a Person to Cloudinary | Yes |
 | **POST** | `/api/v1/relationships` | Add a new relationship between two persons | Yes |
-| **DELETE** | `/api/v1/relationships/{id}` | Delete a relationship link | Yes |
+| **DELETE** | `/api/v1/relationships/{relationship_id}` | Delete a relationship link | Yes |
 
 ---
 
