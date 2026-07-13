@@ -1405,7 +1405,7 @@ function Canvas({
             <div className="p-4 border-b border-border flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-bold tracking-tight text-foreground uppercase tracking-wider">Properties</h2>
-                <p className="text-[10px] text-muted-foreground mt-0.5">View and edit this family member's profile</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">View and edit {selectedPerson.name}'s profile</p>
               </div>
               <button
                 onClick={() => setSelectedPerson(null)}
