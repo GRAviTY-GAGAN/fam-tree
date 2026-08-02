@@ -1,8 +1,9 @@
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from app.db import init_db
+from sqlmodel import Session, text
+from app.db import init_db, get_session
 from app.config import settings
 
 # Import API routers
@@ -24,8 +25,8 @@ app = FastAPI(
 # CORS configurations supporting localhost and production domains
 origins = [
     # UNCOMMENT the local ports below during local environment development:
-    # "http://localhost:3000",
-    # "http://127.0.0.1:3000",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
     "https://fam-tree-iota.vercel.app",
 ]
 
@@ -54,9 +55,17 @@ def read_root():
     return {"message": "Welcome to FamilyFlow API. Version 1.0.0 is running."}
 
 @app.get("/healthinfo")
-def health_check():
+@app.get("/health")
+def health_check(session: Session = Depends(get_session)):
+    db_status = "healthy"
+    try:
+        session.exec(text("SELECT 1;"))
+    except Exception as e:
+        db_status = f"unhealthy: {str(e)}"
+
     return {
-        "status": "healthy",
+        "status": "healthy" if db_status == "healthy" else "degraded",
+        "database": db_status,
         "google_auth_configured": bool(settings.GOOGLE_CLIENT_ID),
         "cloudinary_configured": bool(settings.CLOUDINARY_URL)
     }
